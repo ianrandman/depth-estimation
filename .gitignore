@@ -1,1 +1,4 @@
 .idea/
+/data_depth_annotated/
+/data_depth_selection/
+/data_semantics/
