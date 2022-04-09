@@ -4,7 +4,7 @@ import numpy as np
 import os
 from tqdm import tqdm
 
-from augmenter import instance_segmentation_augment
+from augmenter import instance_segmentation_augment, vertical_position_augment
 from utils.file_utils import file_list
 from utils.labels import id2label
 from utils.read_depth import depth_read
@@ -57,7 +57,6 @@ def main():
             continue
 
         _, run, frame_num = mapping.split()
-        depth_gt_filepath = ''
         if run in DEPTH_TRAIN_RUNS:
             depth_gt_filepath = os.path.join(DEPTH_TRAIN_DIR, run,
                                              'proj_depth/groundtruth/image_02', frame_num + '.png')
@@ -76,18 +75,23 @@ def main():
         semantic_map = cv2.imread(os.path.join(SEMANTIC_TRAIN_SEMANTIC_DIR, filename), -1)
 
         # instance segmentation augmentation
-        instance_aug_image, instance_aug_depth_map, label_map = instance_segmentation_augment(instance_map, depth_map)
+        instance_aug_image, instance_aug_depth_map = instance_segmentation_augment(instance_map, depth_map)
+
+        # vertical position augmentation
+        # TODO use original depth map
+        vertical_aug_image, vertical_aug_depth_map = \
+            vertical_position_augment(image.copy(), instance_map, instance_aug_depth_map.copy())
 
         plt.figure(dpi=500)
         plt.subplot(2, 2, 1)
         plt.imshow(image)
         plt.subplot(2, 2, 2)
-        plt.imshow(instance_aug_image)
+        plt.imshow(vertical_aug_image)
         plt.subplot(2, 2, 3)
-        plt.imshow(instance_aug_depth_map)
-        plt.subplot(2, 2, 4)
-        plt.imshow(label_map)
-        plt.show(block=True)
+        plt.imshow(vertical_aug_depth_map)
+        # plt.subplot(2, 2, 4)
+        # plt.imshow(mask)
+        plt.show()
 
     x = 1
     # semantic_test_numbers = ['0000' + filename.split('.')[0].split('_')[0] for filename in os.listdir(

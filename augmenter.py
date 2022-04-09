@@ -10,9 +10,10 @@ from skimage.measure import label, regionprops, regionprops_table
 
 
 from utils.file_utils import convert
-from utils.labels import id2label
+from utils.labels import id2label, category2categoryId
 
-# id_to_color_func = np.vectorize(lambda id: id2label[id].color)
+# TODO remove
+np.seterr(all='raise')
 
 
 cmap = plt.cm.jet  # define the colormap
@@ -48,36 +49,91 @@ def instance_segmentation_augment(instance_map, depth_map):
 
     # change the depth map
 
-    # # semantic_seg, instance_ids = np.apply_along_axis(convert, 0, instance_map)
-    # num_objects = 0
-    # for seg_id in unique_segs:
-    #     pixel_ids = np.where(instance_map == seg_id)
-    #     mask = np.ma.masked_where(instance_map == seg_id, instance_map)
-    #     mask = mask.mask.astype(int)
-    #     num_objects += measure.label(mask).max()
-    #     assert measure.label(mask).max() > 0
-    #     # instance_rgb[pixel_ids] = (0, 0, 0, 0)
-    #
-    #     regions = regionprops(mask)
-    #
-    #     x=1
-
     # some instances in the instance map may be disconnected, so we want to
     # isolate each region of each instance
     label_map = measure.label(instance_map)
-    # new_depth_map = depth_map.copy()
     for label in np.unique(label_map):
-        # if not label == 62:
-        #     continue
+        # TODO remove
+        pixel_ids = np.where(label_map == label)
+        if not np.all(depth_map[pixel_ids] == -1):
+            depth_map[pixel_ids] = np.mean(depth_map[pixel_ids][depth_map[pixel_ids] != -1])
+            depth_map = np.nan_to_num(depth_map, nan=-1)
 
-        pixel_ids = np.where((label_map == label) & (is_valid(depth_map)))
-        # pixel_ids = np.where(label_map == label)
-        # depth_map[pixel_ids] = np.mean(depth_map[pixel_ids][depth_map[pixel_ids] != -1])
-        depth_map[pixel_ids] = np.mean(depth_map[pixel_ids])
-        # depth_map[pixel_ids] = 1000
-        x = 1
-    # plt.imshow(instance_rgb)
-    # plt.show()
-    # x=1
+        # TODO add back
+        # pixel_ids = np.where((label_map == label) & (is_valid(depth_map)))
+        # depth_map[pixel_ids] = np.mean(depth_map[pixel_ids])
 
-    return instance_rgb, depth_map, label_map
+    return instance_rgb, depth_map
+
+
+# TODO add 'object', 'human',
+categories_to_augment = [category2categoryId[category] for category in ['vehicle']]
+
+
+def vertical_position_augment(image, instance_map, depth_map):
+    semantic_map, instance_id_map = np.apply_along_axis(convert, 0, instance_map)
+
+    # create a mask of pixels that are only part of valid categories
+    semantic_to_categoryId_func = np.vectorize(lambda semantic_id: id2label[semantic_id].categoryId)
+    categoryId_map = semantic_to_categoryId_func(semantic_map)
+    mask = np.where(np.isin(categoryId_map, categories_to_augment), instance_map, 0)
+
+    # get the object IDs from the mask of valid categories
+    object_ids, counts = np.unique(mask, return_counts=True)
+    object_ids = object_ids[1:]  # do not care about background
+    counts = counts[1:]  # number of pixels for each object
+
+    # sort objects by size in descending order
+    indices = np.argsort(counts)[::-1]
+    object_ids = object_ids[indices]
+    counts = counts[indices]
+
+    # TODO remove
+    # create a mask that can be visualized of the potential objects to move
+    mask_final = mask.copy()
+    for i, object_id in enumerate(np.unique(mask_final)):
+        mask_final[mask_final == object_id] = i
+
+    n = 5  # move the n largest objects
+    for i, object_id in enumerate(object_ids):
+        if i >= n:  # TODO add more objects
+            break
+
+        # get the pixels of this object
+        pixel_ids = np.where(mask == object_ids[i])
+        # get the centroid of this object
+        centroid = np.array([np.mean(dimension) for dimension in pixel_ids])
+
+        # change vertical position
+
+        crop_percent = 0.15  # new centroid should not be within this percentage of borders
+        min_vertical_change = 0.25  # make sure vertical position changes by at least 30% of the height
+        assert 0.5 - crop_percent > min_vertical_change + 0.05  # cannot make the minimum impossible
+
+        difference = [0, 0]
+        # calculate a new centroid; make sure vertical position changed enough
+        while np.abs(difference[0]) / mask.shape[0] < min_vertical_change:
+            new_centroid = np.array([np.random.randint(dimension_size * crop_percent, dimension_size - dimension_size * crop_percent)
+                                     for dimension_size in mask.shape])
+            difference = (new_centroid - centroid).astype(int)
+
+        # calculate where the object will move to by adding the difference between the current centroid and the new
+        # centroid
+        new_pixel_ids = np.vstack(pixel_ids).T + difference
+
+        # remove pixels out of bounds
+        indices = np.where((new_pixel_ids[:, 0] > 0) & (new_pixel_ids[:, 0] < image.shape[0]) & (new_pixel_ids[:, 1] > 0) & (new_pixel_ids[:, 1] < image.shape[1]))
+        pixel_ids = np.vstack(pixel_ids).T[indices]
+        new_pixel_ids = new_pixel_ids[indices]
+        pixel_ids = tuple(pixel_ids.T)
+        new_pixel_ids = tuple(new_pixel_ids.T)
+
+        # change image and depth map
+        image[new_pixel_ids] = image[pixel_ids]
+        depth_map[new_pixel_ids] = depth_map[pixel_ids]
+
+        # TODO remove
+        # update mask
+        mask_final[new_pixel_ids] = mask_final[pixel_ids]
+
+    return image, depth_map

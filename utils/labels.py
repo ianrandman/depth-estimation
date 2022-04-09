@@ -113,12 +113,16 @@ id2label        = { label.id      : label for label in labels           }
 trainId2label   = { label.trainId : label for label in reversed(labels) }
 # category to list of label objects
 category2labels = {}
+category2categoryId = {}
 for label in labels:
     category = label.category
     if category in category2labels:
         category2labels[category].append(label)
     else:
         category2labels[category] = [label]
+
+    if category not in category2categoryId:
+        category2categoryId[category] = label.categoryId
 
 #--------------------------------------------------------------------------------
 # Assure single instance name
