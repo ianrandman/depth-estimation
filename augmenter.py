@@ -13,6 +13,10 @@ from PIL import Image
 from utils.file_utils import convert
 from utils.labels import id2label, category2categoryId
 
+
+NUM_OBJECTS_TO_AUGMENT = 5
+
+
 # TODO remove
 np.seterr(all='raise')
 
@@ -26,6 +30,36 @@ cmaplist[0] = (.5, .5, .5, 1.0)
 
 def is_valid(depth):
     return depth > 0
+
+
+# TODO add 'object', 'human',
+categories_to_augment = [category2categoryId[category] for category in ['vehicle']]
+
+
+def identify_objects_to_augment(instance_map):
+    semantic_map, instance_id_map = np.apply_along_axis(convert, 0, instance_map)
+
+    # create a mask of pixels that are only part of valid categories
+    semantic_to_categoryId_func = np.vectorize(lambda semantic_id: id2label[semantic_id].categoryId)
+    categoryId_map = semantic_to_categoryId_func(semantic_map)
+    mask = np.where(np.isin(categoryId_map, categories_to_augment), instance_map, 0)
+
+    # get the object IDs from the mask of valid categories
+    object_ids, counts = np.unique(mask, return_counts=True)
+    object_ids = object_ids[1:]  # do not care about background
+    counts = counts[1:]  # number of pixels for each object
+
+    # sort objects by size in descending order
+    indices = np.argsort(counts)[::-1]
+    object_ids = object_ids[indices]
+
+    # # TODO remove
+    # # create a mask that can be visualized of the potential objects to move
+    # mask_final = mask.copy()
+    # for i, object_id in enumerate(np.unique(mask_final)):
+    #     mask_final[mask_final == object_id] = i
+
+    return object_ids, mask
 
 
 def instance_segmentation_augment(instance_map, depth_map):
@@ -67,37 +101,11 @@ def instance_segmentation_augment(instance_map, depth_map):
     return instance_rgb, depth_map
 
 
-# TODO add 'object', 'human',
-categories_to_augment = [category2categoryId[category] for category in ['vehicle']]
-
-
 def vertical_position_augment(image, instance_map, depth_map):
-    semantic_map, instance_id_map = np.apply_along_axis(convert, 0, instance_map)
+    object_ids, mask = identify_objects_to_augment(instance_map)
 
-    # create a mask of pixels that are only part of valid categories
-    semantic_to_categoryId_func = np.vectorize(lambda semantic_id: id2label[semantic_id].categoryId)
-    categoryId_map = semantic_to_categoryId_func(semantic_map)
-    mask = np.where(np.isin(categoryId_map, categories_to_augment), instance_map, 0)
-
-    # get the object IDs from the mask of valid categories
-    object_ids, counts = np.unique(mask, return_counts=True)
-    object_ids = object_ids[1:]  # do not care about background
-    counts = counts[1:]  # number of pixels for each object
-
-    # sort objects by size in descending order
-    indices = np.argsort(counts)[::-1]
-    object_ids = object_ids[indices]
-    counts = counts[indices]
-
-    # TODO remove
-    # create a mask that can be visualized of the potential objects to move
-    mask_final = mask.copy()
-    for i, object_id in enumerate(np.unique(mask_final)):
-        mask_final[mask_final == object_id] = i
-
-    n = 5  # move the n largest objects
     for i, object_id in enumerate(object_ids):
-        if i >= n:  # TODO add more objects
+        if i >= NUM_OBJECTS_TO_AUGMENT:  # TODO add more objects
             break
 
         # get the pixels of this object
@@ -133,9 +141,9 @@ def vertical_position_augment(image, instance_map, depth_map):
         image[new_pixel_ids] = image[pixel_ids]
         depth_map[new_pixel_ids] = depth_map[pixel_ids]
 
-        # TODO remove
-        # update mask
-        mask_final[new_pixel_ids] = mask_final[pixel_ids]
+        # # TODO remove
+        # # update mask
+        # mask_final[new_pixel_ids] = mask_final[pixel_ids]
 
     return image, depth_map, mask
 
@@ -157,32 +165,10 @@ def apparent_size_augment(image, instance_map, depth_map):
     :return:
     """
 
-    semantic_map, instance_id_map = np.apply_along_axis(convert, 0, instance_map)
+    object_ids, mask = identify_objects_to_augment(instance_map)
 
-    # create a mask of pixels that are only part of valid categories
-    semantic_to_categoryId_func = np.vectorize(lambda semantic_id: id2label[semantic_id].categoryId)
-    categoryId_map = semantic_to_categoryId_func(semantic_map)
-    mask = np.where(np.isin(categoryId_map, categories_to_augment), instance_map, 0)
-
-    # get the object IDs from the mask of valid categories
-    object_ids, counts = np.unique(mask, return_counts=True)
-    object_ids = object_ids[1:]  # do not care about background
-    counts = counts[1:]  # number of pixels for each object
-
-    # sort objects by size in descending order
-    indices = np.argsort(counts)[::-1]
-    object_ids = object_ids[indices]
-    counts = counts[indices]
-
-    # TODO remove
-    # create a mask that can be visualized of the potential objects to move
-    mask_final = mask.copy()
-    for i, object_id in enumerate(np.unique(mask_final)):
-        mask_final[mask_final == object_id] = i
-
-    n = 5  # change apparent size of the n largest objects
     for i, object_id in enumerate(object_ids):
-        if i >= n:
+        if i >= NUM_OBJECTS_TO_AUGMENT:
             break
 
         # get the pixels of this object
