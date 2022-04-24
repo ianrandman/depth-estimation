@@ -4,7 +4,7 @@ import numpy as np
 import os
 from tqdm import tqdm
 
-from augmenter import instance_segmentation_augment, vertical_position_augment
+from augmenter import instance_segmentation_augment, vertical_position_augment, apparent_size_augment
 from utils.file_utils import file_list
 from utils.labels import id2label
 from utils.read_depth import depth_read
@@ -27,6 +27,8 @@ DEPTH_TRAIN_RUNS = os.listdir(DEPTH_TRAIN_DIR)
 DEPTH_VAL_DIR = os.path.join(os.path.dirname(__file__), 'data_depth_annotated/val')
 DEPTH_VAL_RUNS = os.listdir(DEPTH_VAL_DIR)
 
+CALIB_PATH = os.path.join(os.path.dirname(__file__), 'calib_cam_to_cam.txt')  # TODO do not hardcode
+
 
 def depth_test():
     image_dir = os.path.join(DEPTH_TRAIN_DIR, os.listdir(DEPTH_TRAIN_DIR)[1], 'proj_depth/groundtruth/image_02')
@@ -40,8 +42,8 @@ def depth_test():
         x=1
         break
 
-import matplotlib as mpl
-mpl.use('TkAgg')
+# import matplotlib as mpl
+# mpl.use('TkAgg')
 
 def main():
     semantic_train_mapping = file_list(SEMANTIC_MAPPING)
@@ -73,24 +75,30 @@ def main():
         depth_map = depth_read(depth_gt_filepath)
         instance_map = cv2.imread(os.path.join(SEMANTIC_TRAIN_INSTANCE_DIR, filename), -1)
         semantic_map = cv2.imread(os.path.join(SEMANTIC_TRAIN_SEMANTIC_DIR, filename), -1)
+        # calib = read_calib_file(CALIB_PATH)
 
         # instance segmentation augmentation
         instance_aug_image, instance_aug_depth_map = instance_segmentation_augment(instance_map, depth_map)
 
         # vertical position augmentation
         # TODO use original depth map
-        vertical_aug_image, vertical_aug_depth_map = \
+        vertical_aug_image, vertical_aug_depth_map, mask = \
             vertical_position_augment(image.copy(), instance_map, instance_aug_depth_map.copy())
+
+        # apparent size augmentation
+        # TODO use original depth map
+        apparent_size_aug_image, apparent_size_aug_depth_map = \
+            apparent_size_augment(image.copy(), instance_map, instance_aug_depth_map.copy())
 
         plt.figure(dpi=500)
         plt.subplot(2, 2, 1)
         plt.imshow(image)
         plt.subplot(2, 2, 2)
-        plt.imshow(vertical_aug_image)
+        plt.imshow(apparent_size_aug_image)
         plt.subplot(2, 2, 3)
-        plt.imshow(vertical_aug_depth_map)
-        # plt.subplot(2, 2, 4)
-        # plt.imshow(mask)
+        plt.imshow(apparent_size_aug_depth_map)
+        plt.subplot(2, 2, 4)
+        plt.imshow(mask)
         plt.show()
 
     x = 1

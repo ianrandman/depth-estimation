@@ -7,6 +7,7 @@ import random
 import cv2
 from skimage import measure
 from skimage.measure import label, regionprops, regionprops_table
+from PIL import Image
 
 
 from utils.file_utils import convert
@@ -135,5 +136,106 @@ def vertical_position_augment(image, instance_map, depth_map):
         # TODO remove
         # update mask
         mask_final[new_pixel_ids] = mask_final[pixel_ids]
+
+    return image, depth_map, mask
+
+
+def apparent_size_augment(image, instance_map, depth_map):
+    """
+    Z = (f / h) * H
+    Z = depth
+    f = focal length
+    h = apparent size
+    H = true size
+
+    Change in apparent size is proportional to change in depth.
+    No need for true size or focal length.
+
+    :param image:
+    :param instance_map:
+    :param depth_map:
+    :return:
+    """
+
+    semantic_map, instance_id_map = np.apply_along_axis(convert, 0, instance_map)
+
+    # create a mask of pixels that are only part of valid categories
+    semantic_to_categoryId_func = np.vectorize(lambda semantic_id: id2label[semantic_id].categoryId)
+    categoryId_map = semantic_to_categoryId_func(semantic_map)
+    mask = np.where(np.isin(categoryId_map, categories_to_augment), instance_map, 0)
+
+    # get the object IDs from the mask of valid categories
+    object_ids, counts = np.unique(mask, return_counts=True)
+    object_ids = object_ids[1:]  # do not care about background
+    counts = counts[1:]  # number of pixels for each object
+
+    # sort objects by size in descending order
+    indices = np.argsort(counts)[::-1]
+    object_ids = object_ids[indices]
+    counts = counts[indices]
+
+    # TODO remove
+    # create a mask that can be visualized of the potential objects to move
+    mask_final = mask.copy()
+    for i, object_id in enumerate(np.unique(mask_final)):
+        mask_final[mask_final == object_id] = i
+
+    n = 5  # change apparent size of the n largest objects
+    for i, object_id in enumerate(object_ids):
+        if i >= n:
+            break
+
+        # get the pixels of this object
+        pixel_ids = np.where(mask == object_ids[i])
+        # # get the centroid of this object
+        # centroid = np.array([np.mean(dimension) for dimension in pixel_ids])
+        # get the bbox of this object (row1, col1, row2, col2)
+        row_min = pixel_ids[0].min()
+        col_min = pixel_ids[1].min()
+        bbox = (row_min, col_min, pixel_ids[0].max(), pixel_ids[1].max())
+        # get the center of this object's bbox (row, col)
+        center = ((bbox[2] + bbox[0]) // 2, (bbox[3] + bbox[1]) // 2)
+
+        rel_pixel_ids = (pixel_ids[0] - row_min, pixel_ids[1] - col_min)
+        shape = (bbox[2] - bbox[0] + 1, bbox[3] - bbox[1] + 1, 4)
+
+        # get a rectangular image of just the object
+        # pixels where the object does not exist have a color of (0, 0, 0, 0), which is transparent
+        im_object = np.zeros(shape).astype(int)
+        im_object_temp = image[pixel_ids]
+        # add alpha channel
+        im_object_temp = np.hstack((im_object_temp,
+                                    np.expand_dims(np.full(im_object_temp.shape[0], 255), axis=1)))
+        im_object[rel_pixel_ids] = im_object_temp
+
+        # get the depth map for the object; -1s outside of object bounds
+        depth_map_object = np.full(shape[:-1], -1).astype(float)
+        depth_map_object[rel_pixel_ids] = depth_map[pixel_ids]
+
+        # scale the object
+        scale_percent = 200#np.random.randint(125, 200)  # percent of original size
+        width = int(im_object.shape[1] * scale_percent / 100)
+        height = int(im_object.shape[0] * scale_percent / 100)
+        dim = (width, height)
+        im_object = cv2.resize(im_object.astype(np.uint8), dim, interpolation=cv2.INTER_NEAREST)
+
+        # scale the depth map
+        depth_map_object = cv2.resize(depth_map_object, dim, interpolation=cv2.INTER_NEAREST)
+
+        # get the top left (x, y) of where the changed object will be
+        top_left = (center[1] - dim[0] // 2, center[0] - dim[1] // 2)
+
+        # paste the object onto the original image
+        image = Image.fromarray(image)
+        im_object = Image.fromarray(im_object)
+        image.paste(im_object, top_left, mask=im_object)
+        image = np.array(image)
+
+        # paste the depth map onto the original depth map
+        # areas with the object will be overwritten; gaps and areas without the object will retain original depth
+        depth_map = Image.fromarray(depth_map)
+        depth_map_object = Image.fromarray(depth_map_object)
+        depth_map.paste(depth_map_object, top_left, mask=Image.fromarray(np.array(im_object)[:, :, 3] == 255))
+        depth_map = np.asarray(depth_map)
 
     return image, depth_map
