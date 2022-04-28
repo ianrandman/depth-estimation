@@ -143,18 +143,18 @@ def main():
         cv2.imwrite(vertical_position_aug_depth_map_filepath, vertical_position_aug_depth_map)
         cv2.imwrite(apparent_size_aug_depth_map_filepath, apparent_size_aug_depth_map)
 
-    # uncomment to produce train/val/test split files
-    # from sklearn.model_selection import train_test_split
-    # train_dirs, test_dirs = train_test_split(os.listdir(OUT_DIR), train_size=0.8)
-    # # train_dirs, val_dirs = train_test_split(os.listdir(OUT_DIR), train_size=0.9)
-    # with open(os.path.join(OUT_DIR, 'train_files.txt'), 'w') as f:
-    #     for dir in train_dirs:
-    #         f.write(dir + '\n')
-    # with open(os.path.join(OUT_DIR, 'val_files.txt'), 'w') as f:
-    #     f.write('\n')
-    # with open(os.path.join(OUT_DIR, 'test_files.txt'), 'w') as f:
-    #     for dir in test_dirs:
-    #         f.write(dir + '\n')
+    # make the train/val/test split
+    from sklearn.model_selection import train_test_split
+    train_dirs, test_dirs = train_test_split(os.listdir(OUT_DIR), train_size=0.8)
+    # train_dirs, val_dirs = train_test_split(os.listdir(OUT_DIR), train_size=0.9)
+    with open(os.path.join(OUT_DIR, 'train_files.txt'), 'w') as f:
+        for dir in train_dirs:
+            f.write(dir + '\n')
+    with open(os.path.join(OUT_DIR, 'val_files.txt'), 'w') as f:
+        f.write('\n')
+    with open(os.path.join(OUT_DIR, 'test_files.txt'), 'w') as f:
+        for dir in test_dirs:
+            f.write(dir + '\n')
 
 
 if __name__ == '__main__':
