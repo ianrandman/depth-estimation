@@ -1,12 +1,16 @@
+"""
+The main functions for performing data augmentations.
+The augmentations are instance segmentation, vertical position, and apparent size.
+
+__author__ = Ian Randman
+"""
+
 from math import floor
 
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib as mpl
-import random
 import cv2
 from skimage import measure
-from skimage.measure import label, regionprops, regionprops_table
 from PIL import Image
 
 
@@ -15,10 +19,7 @@ from utils.labels import id2label, category2categoryId
 
 
 NUM_OBJECTS_TO_AUGMENT = 5
-
-
-# TODO remove
-np.seterr(all='raise')
+CATEGORIES_TO_AUGMENT = [category2categoryId[category] for category in ['vehicle', 'object', 'human']]
 
 
 cmap = plt.cm.jet  # define the colormap
@@ -32,17 +33,16 @@ def is_valid(depth):
     return depth > 0
 
 
-# TODO add 'object', 'human',
-categories_to_augment = [category2categoryId[category] for category in ['vehicle']]
-
-
 def identify_objects_to_augment(instance_map):
+    # only "significant" objects within the scene should be considered candidates for augmenting
+
+    # separate the instance segmentation map into semantic labels and instance labels
     semantic_map, instance_id_map = np.apply_along_axis(convert, 0, instance_map)
 
     # create a mask of pixels that are only part of valid categories
     semantic_to_categoryId_func = np.vectorize(lambda semantic_id: id2label[semantic_id].categoryId)
     categoryId_map = semantic_to_categoryId_func(semantic_map)
-    mask = np.where(np.isin(categoryId_map, categories_to_augment), instance_map, 0)
+    mask = np.where(np.isin(categoryId_map, CATEGORIES_TO_AUGMENT), instance_map, 0)
 
     # get the object IDs from the mask of valid categories
     object_ids, counts = np.unique(mask, return_counts=True)
@@ -53,16 +53,17 @@ def identify_objects_to_augment(instance_map):
     indices = np.argsort(counts)[::-1]
     object_ids = object_ids[indices]
 
-    # # TODO remove
-    # # create a mask that can be visualized of the potential objects to move
-    # mask_final = mask.copy()
-    # for i, object_id in enumerate(np.unique(mask_final)):
-    #     mask_final[mask_final == object_id] = i
-
+    # return object IDs sorted in descending order of the size of the object
+    # also return a mask for the candidate objects
     return object_ids, mask
 
 
 def instance_segmentation_augment(instance_map, depth_map):
+    # perform the instance segmentation augmentation
+    # the new image is a colorized version of the instance segmentation map
+    # the new depth map replaces depth within an object region as the average of the depths within that region
+
+    # get all instance IDs
     unique_segs = np.unique(instance_map)
     assert len(cmaplist) > len(unique_segs)  # TODO case where too many instances
 
@@ -81,31 +82,42 @@ def instance_segmentation_augment(instance_map, depth_map):
     # create an RGB image for the instance segmentation
     id_to_color_func = np.vectorize(lambda id: instance_to_color[id])
     instance_rgb = np.dstack(id_to_color_func(instance_map))
+    instance_rgb = np.array(Image.fromarray((instance_rgb * 255).astype(np.uint8)).convert('RGB'))
 
     # change the depth map
 
     # some instances in the instance map may be disconnected, so we want to
     # isolate each region of each instance
     label_map = measure.label(instance_map)
+
+    # iterate over all regions
     for label in np.unique(label_map):
-        # TODO remove
-        pixel_ids = np.where(label_map == label)
+        # use this instead for a dense map (for visualization)
+        # pixel_ids = np.where(label_map == label)
+        # if not np.all(depth_map[pixel_ids] == -1):
+        #     depth_map[pixel_ids] = np.mean(depth_map[pixel_ids][depth_map[pixel_ids] != -1])
+        #     depth_map = np.nan_to_num(depth_map, nan=-1)
+
+        # replace the depth of the region with the mean depth
+        pixel_ids = np.where((label_map == label) & (is_valid(depth_map)))
         if not np.all(depth_map[pixel_ids] == -1):
-            depth_map[pixel_ids] = np.mean(depth_map[pixel_ids][depth_map[pixel_ids] != -1])
-            depth_map = np.nan_to_num(depth_map, nan=-1)
+            depth_map[pixel_ids] = np.mean(depth_map[pixel_ids])
 
-        # TODO add back
-        # pixel_ids = np.where((label_map == label) & (is_valid(depth_map)))
-        # depth_map[pixel_ids] = np.mean(depth_map[pixel_ids])
-
+    # return the new image and new depth map
     return instance_rgb, depth_map
 
 
 def vertical_position_augment(image, instance_map, depth_map):
+    # perform the vertical position augmentation
+    # objects within the scene are copied to new locations with "significantly" different vertical position
+    # depth values are copied to the new location
+
+    # get the candidate objects for the augmentation
     object_ids, mask = identify_objects_to_augment(instance_map)
 
+    # use only the NUM_OBJECTS_TO_AUGMENT largest objects
     for i, object_id in enumerate(object_ids):
-        if i >= NUM_OBJECTS_TO_AUGMENT:  # TODO add more objects
+        if i >= NUM_OBJECTS_TO_AUGMENT:
             break
 
         # get the pixels of this object
@@ -141,15 +153,15 @@ def vertical_position_augment(image, instance_map, depth_map):
         image[new_pixel_ids] = image[pixel_ids]
         depth_map[new_pixel_ids] = depth_map[pixel_ids]
 
-        # # TODO remove
-        # # update mask
-        # mask_final[new_pixel_ids] = mask_final[pixel_ids]
-
+    # return the new image, the new depth map, and the candidate mask (for visualization)
     return image, depth_map, mask
 
 
 def apparent_size_augment(image, instance_map, depth_map):
     """
+    Perform the apparent size augmentation.
+    Objects within the image are scaled, and their associated depths are scaled inversely.
+
     Z = (f / h) * H
     Z = depth
     f = focal length
@@ -158,15 +170,12 @@ def apparent_size_augment(image, instance_map, depth_map):
 
     Change in apparent size is proportional to change in depth.
     No need for true size or focal length.
-
-    :param image:
-    :param instance_map:
-    :param depth_map:
-    :return:
     """
 
+    # get the candidate objects for the augmentation
     object_ids, mask = identify_objects_to_augment(instance_map)
 
+    # use only the NUM_OBJECTS_TO_AUGMENT largest objects
     for i, object_id in enumerate(object_ids):
         if i >= NUM_OBJECTS_TO_AUGMENT:
             break
@@ -199,7 +208,7 @@ def apparent_size_augment(image, instance_map, depth_map):
         depth_map_object[rel_pixel_ids] = depth_map[pixel_ids]
 
         # scale the object
-        scale_percent = 200#np.random.randint(125, 200)  # percent of original size
+        scale_percent = np.random.randint(125, 200)  # percent of original size
         width = int(im_object.shape[1] * scale_percent / 100)
         height = int(im_object.shape[0] * scale_percent / 100)
         dim = (width, height)
@@ -217,6 +226,9 @@ def apparent_size_augment(image, instance_map, depth_map):
         image.paste(im_object, top_left, mask=im_object)
         image = np.array(image)
 
+        # calculate the new depth by dividing by the scale factor
+        depth_map_object[is_valid(depth_map_object)] /= (scale_percent / 100)
+
         # paste the depth map onto the original depth map
         # areas with the object will be overwritten; gaps and areas without the object will retain original depth
         depth_map = Image.fromarray(depth_map)
@@ -224,4 +236,5 @@ def apparent_size_augment(image, instance_map, depth_map):
         depth_map.paste(depth_map_object, top_left, mask=Image.fromarray(np.array(im_object)[:, :, 3] == 255))
         depth_map = np.asarray(depth_map)
 
+    # return the new image and the new depth map
     return image, depth_map
